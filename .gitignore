@@ -1,0 +1,31 @@
+# Dependencies / build
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.vite/
+playwright-report/
+test-results/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Data — never commit client data, dumps or source documents
+/sources/
+*.dump
+*.sql.gz
+*.backup
+/data/
+/uploads/
+
+# Tooling / local
+.vscode/
+.idea/
+*.log
+.DS_Store
+Thumbs.db
