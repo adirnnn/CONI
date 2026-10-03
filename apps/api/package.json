@@ -1,0 +1,31 @@
+{
+  "name": "@coni/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "migrate": "tsx src/db/migrate.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p .",
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "create-admin": "tsx src/scripts/create-admin.ts"
+  },
+  "dependencies": {
+    "@coni/shared": "0.1.0",
+    "@fastify/cookie": "^11.1.2",
+    "@node-rs/argon2": "^2.2.1",
+    "decimal.js": "^10.4.3",
+    "fastify": "^5.12.5",
+    "otpauth": "^9.5.2",
+    "pg": "^8.13.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.11.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}
