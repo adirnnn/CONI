@@ -5,6 +5,7 @@ import { z, ZodError } from 'zod';
 import type { Config } from './config.ts';
 import { AuthService, type AuthUser } from './auth/service.ts';
 import { hashPassword, verifyPassword } from './auth/crypto.ts';
+import './db/types.ts';
 import { withActor } from './db/tx.ts';
 import {
   LedgerError, approveEntry, createEntry, draftReversal, postEntry, postReversal, trialBalance,
@@ -209,6 +210,33 @@ export function buildApp(deps: { pool: Pool; config: Config }): FastifyInstance 
   // ------------------------------------------------------------ ledger
   app.get('/projects', { preHandler: guard('ledger.read') }, async (req) =>
     as(req, async (c) => (await c.query('SELECT id, code, name, active FROM project ORDER BY code')).rows));
+
+  app.get('/accounts', { preHandler: guard('ledger.read') }, async (req) =>
+    as(req, async (c) => (await c.query(
+      'SELECT id, code, name, type, is_postable, requires_project, active FROM account ORDER BY code')).rows));
+
+  app.get('/periods', { preHandler: guard('ledger.read') }, async (req) =>
+    as(req, async (c) => (await c.query(
+      `SELECT id, code, to_char(start_date, 'YYYY-MM-DD') AS start_date, to_char(end_date, 'YYYY-MM-DD') AS end_date, status
+         FROM fiscal_period ORDER BY start_date DESC`)).rows));
+
+  app.get('/journal-entries', { preHandler: guard('ledger.read') }, async (req) => {
+    const q = z.object({
+      status: z.enum(['DRAFT', 'APPROVED', 'POSTED', 'REVERSED']).optional(),
+      projectId: id.optional(),
+      limit: z.coerce.number().int().min(1).max(200).default(50),
+      offset: z.coerce.number().int().min(0).default(0),
+    }).parse(req.query);
+    return as(req, async (c) => (await c.query(
+      `SELECT e.id, to_char(e.entry_date, 'YYYY-MM-DD') AS entry_date, e.description, e.status, e.created_by,
+              e.approved_by, e.posted_by, e.reverses_entry_id,
+              (SELECT coalesce(sum(debit_gtq), 0)::numeric(18,2)::text FROM journal_line l WHERE l.entry_id = e.id) AS total_gtq
+         FROM journal_entry e
+        WHERE ($1::text IS NULL OR e.status = $1)
+          AND ($2::int IS NULL OR EXISTS (SELECT 1 FROM journal_line l WHERE l.entry_id = e.id AND l.project_id = $2))
+        ORDER BY e.entry_date DESC, e.id DESC LIMIT $3 OFFSET $4`,
+      [q.status ?? null, q.projectId ?? null, q.limit, q.offset])).rows);
+  });
 
   app.post('/journal-entries', { preHandler: guard('ledger.write') }, async (req, reply) => {
     const body = entrySchema.parse(req.body);

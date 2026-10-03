@@ -7,9 +7,10 @@
     "migrate": "tsx src/db/migrate.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p .",
-    "dev": "tsx watch src/server.ts",
+    "dev": "node --env-file=.env --import tsx --watch src/server.ts",
     "start": "tsx src/server.ts",
-    "create-admin": "tsx src/scripts/create-admin.ts"
+    "create-admin": "tsx src/scripts/create-admin.ts",
+    "seed:dev": "tsx src/scripts/seed-dev.ts"
   },
   "dependencies": {
     "@coni/shared": "0.1.0",

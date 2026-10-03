@@ -183,6 +183,15 @@ describe('project isolation (M07-SEC-002)', () => {
       { entryDate: OCT, periodId: ref.period['2026-10'] })).statusCode).toBe(403); // lacks ledger.post
   });
 
+  it('lists only entries of assigned projects', async () => {
+    const own = (await call('GET', '/journal-entries', conta)).json() as { id: string }[];
+    expect(own.map((e) => e.id)).toContain(postedA);
+    const other = (await call('GET', '/journal-entries', consultaB)).json() as { id: string }[];
+    expect(other).toEqual([]);
+    const filtered = (await call('GET', `/journal-entries?projectId=${ref.project['P-A']}`, consultaB)).json();
+    expect(filtered).toEqual([]);
+  });
+
   it('refuses a report filtered by an unassigned project', async () => {
     const res = await call('GET', `/reports/trial-balance?from=2026-10-01&to=2026-10-31&projectId=${ref.project['P-A']}`, consultaB);
     expect(res.statusCode).toBe(403);

@@ -4,8 +4,8 @@
 
 ## Estado del repositorio
 
-- Rama: `main` (renombrada desde `master`). **Sin commits todavía**: el commit y el push quedaron pendientes de autorización del desarrollador. Primero hay que confirmar que `github.com/adirnnn/CONI` es privado.
-- Remoto: `origin` → `github.com/adirnnn/CONI` (`git ls-remote` no devolvió referencias; parece vacío).
+- Ramas locales: `main` (documentación) y `feat/foundation` (código). Ver `git log --oneline`.
+- Remoto: `origin` → `github.com/adirnnn/CONI` (privado, confirmado por el desarrollador). **Push pendiente:** el entorno del asistente no tiene permiso para publicar; el desarrollador debe ejecutar el push.
 
 ## Estado contractual
 
@@ -23,11 +23,18 @@ No adjudicado ni firmado. No hay D1. Todo el trabajo es precontractual (DEC-004)
   - `npm run typecheck`: sin errores
   - `npm test`: 4/4 (shared) + 54/54 (api: 26 del mayor, 28 de seguridad y aislamiento)
   - Arranque real: `npm run migrate` aplicó 001 y 002 en la base de desarrollo; `/health` 200, `/projects` sin sesión 401, login sin encabezado CSRF 403
+- **Incremento 3, interfaz web (`apps/web`):** React, Vite y Tailwind en español.
+  - pantallas: inicio de sesión, cambio de contraseña obligatorio, configuración y verificación MFA (QR), lista de partidas con filtros, captura de partida GTQ con cuadre en vivo, detalle con acciones según permiso (aprobar, contabilizar, revertir), balance de comprobación
+  - API ampliada: `GET /accounts`, `/periods`, `/journal-entries`
+  - fechas `DATE` devueltas como texto `YYYY-MM-DD`, sin desplazamiento por zona horaria
+- Verificación manual en navegador (2026-10-03, datos sintéticos):
+  - inicio de sesión de `demo.contador`, MFA con QR, captura de partida de Q1,250.50 cuadrada, aprobación por `demo.gerente`, contabilización, balance de comprobación cuadrado
+  - `demo.consulta` (DEMO-B): 404 en la partida de DEMO-A, lista vacía, 403 en reporte de DEMO-A
+- Pruebas automatizadas: 4 (shared) + 55 (api) + 1 (web). `npm run build -w @coni/web` correcto.
 - CI (`.github/workflows/ci.yml`) aún no ha corrido (sin push).
 
 ## Pendiente inmediato
 
-- `apps/web`: shell React/Vite en español con login, MFA y partidas.
 - Límite de intentos por IP, protección contra reutilización de TOTP, recuperación de MFA por el administrador.
 - Exportación diaria del hash de bitácora fuera del servidor.
 - Decisiones de CONI: DEC-ROL (matriz de roles), DEC-VIS (visibilidad de cuentas institucionales).
@@ -37,6 +44,11 @@ No adjudicado ni firmado. No hay D1. Todo el trabajo es precontractual (DEC-004)
 ```bash
 npm install
 docker compose up -d db
+# desarrollo local: crear apps/api/.env (ver .env.example), luego:
+npm run migrate -w @coni/api            # usa DATABASE_URL
+ALLOW_SYNTHETIC_SEED=1 DEV_SEED_PASSWORD=... DATABASE_URL=... npm run seed:dev -w @coni/api   # solo datos sintéticos
+npm run dev -w @coni/api                # API en :3000
+npm run dev -w @coni/web                # web en :5180 (proxy /api)
 npm run typecheck
 npm test
 # servidor local (variables en .env.example)
@@ -63,5 +75,5 @@ Ninguno. `npm audit` reporta avisos en dependencias de desarrollo; están sin re
 ## Siguiente acción
 
 1. Commit de documentación en `main`; rama `feat/foundation` con incrementos 1 y 2; push; PR. **Pendiente de autorización.**
-2. Shell web (login, MFA, lista y captura de partidas, balance de comprobación).
-3. Catálogo de cuentas configurable, periodos y tipos de cambio BANGUAT (tarea programada).
+2. Catálogo de cuentas configurable, administración de periodos (cierre/reapertura con bitácora) y tipos de cambio BANGUAT (tarea programada + captura multimoneda).
+3. Pruebas E2E con Playwright de los flujos críticos.
