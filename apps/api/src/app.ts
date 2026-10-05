@@ -8,8 +8,9 @@ import { hashPassword, verifyPassword } from './auth/crypto.ts';
 import './db/types.ts';
 import { withActor } from './db/tx.ts';
 import {
-  LedgerError, approveEntry, createEntry, draftReversal, postEntry, postReversal, trialBalance,
+  LedgerError, approveEntry, createEntry, draftReversal, periodFor, postEntry, postReversal, priceLines, trialBalance,
 } from './ledger/ledger.ts';
+import { RateSyncError, syncRates, type RateFetcher } from './integrations/banguat.ts';
 
 declare module 'fastify' {
   interface FastifyRequest { user: AuthUser | null }
@@ -27,32 +28,30 @@ const amount = z.string().regex(/^\d{1,16}(\.\d{1,2})?$/);
 const rate = z.string().regex(/^\d{1,12}(\.\d{1,6})?$/);
 const id = z.coerce.number().int().positive();
 
+const positive = (v: string) => /[1-9]/.test(v);
+
+// Rates and GTQ equivalents are computed by the server (priceLines), never taken from the client.
 const lineSchema = z.object({
   accountId: id,
   currency: z.string().regex(/^[A-Z]{3}$/),
   debit: amount.optional(),
   credit: amount.optional(),
-  rate,
-  rateSource: z.enum(['FUNCTIONAL', 'BANGUAT', 'MANUAL']),
-  rateDate: date,
-  debitGtq: amount.optional(),
-  creditGtq: amount.optional(),
   projectId: id.nullish(),
   fundId: id.nullish(),
   donorId: id.nullish(),
   agreementId: id.nullish(),
   memo: z.string().max(500).optional(),
-});
+}).refine((l) => !(l.debit && l.credit) && Boolean(l.debit && positive(l.debit)) !== Boolean(l.credit && positive(l.credit)),
+  { message: 'Cada línea lleva un monto positivo en Debe o en Haber, no en ambos' });
 
 const entrySchema = z.object({
   entryDate: date,
-  periodId: id,
   description: z.string().min(1).max(500),
   source: z.object({ type: z.string().min(1).max(40), id: z.string().min(1).max(100) }).optional(),
   lines: z.array(lineSchema).min(2).max(500),
 });
 
-export function buildApp(deps: { pool: Pool; config: Config }): FastifyInstance {
+export function buildApp(deps: { pool: Pool; config: Config; rateFetcher?: RateFetcher }): FastifyInstance {
   const { pool, config } = deps;
   const auth = new AuthService(pool, config);
   const app = Fastify({ logger: false, trustProxy: true, bodyLimit: 1_000_000 });
@@ -77,11 +76,14 @@ export function buildApp(deps: { pool: Pool; config: Config }): FastifyInstance 
     if (err instanceof HttpError) return reply.status(err.status).send({ error: err.code, message: err.message });
     if (err instanceof ZodError) return reply.status(400).send({ error: 'VALIDATION', issues: err.issues });
     if (err instanceof LedgerError) {
-      const status = { NOT_FOUND: 404, CONFLICT: 409, FORBIDDEN: 403 }[err.code];
+      const status = { NOT_FOUND: 404, CONFLICT: 409, FORBIDDEN: 403, RULE: 422 }[err.code];
       return reply.status(status).send({ error: err.code, message: err.message });
     }
     const pgCode = (err as { code?: string }).code;
+    if (err instanceof RateSyncError) return reply.status(422).send({ error: 'RATE_SYNC', message: err.message });
     if (pgCode === '23514') return reply.status(422).send({ error: 'RULE', message: err.message });
+    if (pgCode === '23P01') return reply.status(422).send({ error: 'RULE', message: 'El rango se traslapa con otro registro' });
+    if (pgCode === 'P0002') return reply.status(404).send({ error: 'NOT_FOUND', message: 'No encontrado' });
     if (pgCode === '23505') return reply.status(409).send({ error: 'DUPLICATE', message: 'Registro duplicado' });
     if (pgCode === '23503') return reply.status(422).send({ error: 'REFERENCE', message: 'Referencia inválida' });
     if (pgCode === '42501') return reply.status(403).send({ error: 'FORBIDDEN', message: 'Acceso denegado' });
@@ -213,7 +215,7 @@ export function buildApp(deps: { pool: Pool; config: Config }): FastifyInstance 
 
   app.get('/accounts', { preHandler: guard('ledger.read') }, async (req) =>
     as(req, async (c) => (await c.query(
-      'SELECT id, code, name, type, is_postable, requires_project, active FROM account ORDER BY code')).rows));
+      'SELECT id, code, name, type, parent_id, is_postable, requires_project, active FROM account ORDER BY code')).rows));
 
   app.get('/periods', { preHandler: guard('ledger.read') }, async (req) =>
     as(req, async (c) => (await c.query(
@@ -240,7 +242,12 @@ export function buildApp(deps: { pool: Pool; config: Config }): FastifyInstance 
 
   app.post('/journal-entries', { preHandler: guard('ledger.write') }, async (req, reply) => {
     const body = entrySchema.parse(req.body);
-    const entryId = await as(req, (c) => createEntry(c, { ...body, createdBy: req.user!.username }));
+    const entryId = await as(req, async (c) => createEntry(c, {
+      ...body,
+      periodId: await periodFor(c, body.entryDate),
+      lines: await priceLines(c, body.entryDate, body.lines),
+      createdBy: req.user!.username,
+    }));
     return reply.status(201).send({ id: entryId });
   });
 
@@ -269,8 +276,9 @@ export function buildApp(deps: { pool: Pool; config: Config }): FastifyInstance 
   }));
   app.post('/journal-entries/:id/reverse', { preHandler: guard('ledger.post') }, async (req, reply) => {
     const { id: entryId } = z.object({ id }).parse(req.params);
-    const body = z.object({ entryDate: date, periodId: id }).parse(req.body);
-    const revId = await as(req, (c) => draftReversal(c, String(entryId), body.entryDate, body.periodId, req.user!.username));
+    const body = z.object({ entryDate: date }).parse(req.body);
+    const revId = await as(req, async (c) =>
+      draftReversal(c, String(entryId), body.entryDate, await periodFor(c, body.entryDate), req.user!.username));
     return reply.status(201).send({ id: revId });
   });
 
@@ -285,6 +293,93 @@ export function buildApp(deps: { pool: Pool; config: Config }): FastifyInstance 
       return { scope, from: q.from, to: q.to, projectId: q.projectId ?? null, rows: await trialBalance(c, q) };
     });
   });
+
+  // ------------------------------------------------------------ accounting configuration
+  app.post('/accounts', { preHandler: guard('accounting.config') }, async (req, reply) => {
+    const b = z.object({
+      code: z.string().regex(/^[0-9A-Za-z.-]{1,30}$/),
+      name: z.string().min(1).max(200),
+      type: z.enum(['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE']),
+      parentId: id.nullish(),
+      isPostable: z.boolean(),
+      requiresProject: z.boolean().default(false),
+    }).parse(req.body);
+    const row = await as(req, async (c) => (await c.query(
+      `INSERT INTO account (code, name, type, parent_id, is_postable, requires_project)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [b.code, b.name, b.type, b.parentId ?? null, b.isPostable, b.requiresProject])).rows[0]);
+    return reply.status(201).send(row);
+  });
+
+  app.patch('/accounts/:id', { preHandler: guard('accounting.config') }, async (req) => {
+    const { id: accountId } = z.object({ id }).parse(req.params);
+    const b = z.object({
+      name: z.string().min(1).max(200).optional(),
+      active: z.boolean().optional(),
+      requiresProject: z.boolean().optional(),
+    }).parse(req.body);
+    const n = await as(req, async (c) => (await c.query(
+      `UPDATE account SET name = coalesce($2, name), active = coalesce($3, active),
+              requires_project = coalesce($4, requires_project) WHERE id = $1`,
+      [accountId, b.name ?? null, b.active ?? null, b.requiresProject ?? null])).rowCount);
+    if (n !== 1) throw new HttpError(404, 'NOT_FOUND', 'Cuenta no encontrada');
+    return { ok: true };
+  });
+
+  app.post('/periods', { preHandler: guard('accounting.config') }, async (req, reply) => {
+    const b = z.object({ code: z.string().min(1).max(20), startDate: date, endDate: date }).parse(req.body);
+    const row = await as(req, async (c) => (await c.query(
+      'INSERT INTO fiscal_period (code, start_date, end_date) VALUES ($1,$2,$3) RETURNING id',
+      [b.code, b.startDate, b.endDate])).rows[0]);
+    return reply.status(201).send(row);
+  });
+
+  app.post('/periods/:id/close', { preHandler: guard('period.close') }, async (req) => {
+    const { id: pid } = z.object({ id }).parse(req.params);
+    await as(req, (c) => c.query("SELECT period_set_status($1, 'CLOSED', NULL)", [pid]));
+    return { ok: true };
+  });
+
+  app.post('/periods/:id/reopen', { preHandler: guard('period.close') }, async (req) => {
+    const { id: pid } = z.object({ id }).parse(req.params);
+    const b = z.object({ reason: z.string().min(10).max(1000) }).parse(req.body);
+    await as(req, (c) => c.query("SELECT period_set_status($1, 'OPEN', $2)", [pid, b.reason]));
+    return { ok: true };
+  });
+
+  app.get('/currencies', { preHandler: guard('ledger.read') }, async (req) =>
+    as(req, async (c) => (await c.query(
+      'SELECT code, name, is_functional, banguat_code, enabled FROM currency ORDER BY is_functional DESC, code')).rows));
+
+  app.get('/rates', { preHandler: guard('ledger.read') }, async (req) => {
+    const q = z.object({ currency: z.string().regex(/^[A-Z]{3}$/), from: date, to: date }).parse(req.query);
+    return as(req, async (c) => (await c.query(
+      `SELECT currency_code, rate_date, rate::text, source, justification, approved_by
+         FROM exchange_rate WHERE currency_code = $1 AND rate_date BETWEEN $2 AND $3
+        ORDER BY rate_date DESC, source`, [q.currency, q.from, q.to])).rows);
+  });
+
+  app.post('/rates/manual', { preHandler: guard('rates.manual') }, async (req, reply) => {
+    const b = z.object({
+      currency: z.string().regex(/^[A-Z]{3}$/), date, rate, justification: z.string().min(10).max(1000),
+    }).parse(req.body);
+    await as(req, (c) => c.query('SELECT rate_set_manual($1,$2,$3,$4)', [b.currency, b.date, b.rate, b.justification]));
+    return reply.status(201).send({ ok: true });
+  });
+
+  app.post('/rates/sync', { preHandler: guard('accounting.config') }, async (req) => {
+    const b = z.object({ currency: z.string().regex(/^[A-Z]{3}$/).default('USD'), from: date, to: date })
+      .refine((v) => v.from <= v.to, 'Rango inválido').parse(req.body);
+    const days = (Date.parse(b.to) - Date.parse(b.from)) / 86_400_000;
+    if (days > 366) throw new HttpError(400, 'VALIDATION', 'El rango máximo es de un año');
+    return syncRates(pool, b.currency, b.from, b.to, deps.rateFetcher);
+  });
+
+  app.get('/rates/sync-runs', { preHandler: guard('ledger.read') }, async (req) =>
+    as(req, async (c) => (await c.query('SELECT * FROM rate_sync_run ORDER BY id DESC LIMIT 50')).rows));
+
+  app.get('/settings', { preHandler: guard('ledger.read') }, async (req) =>
+    as(req, async (c) => (await c.query('SELECT key, value, status, description FROM app_setting ORDER BY key')).rows));
 
   // ------------------------------------------------------------ audit
   app.get('/audit/verify', { preHandler: guard('audit.read') }, async (req) =>

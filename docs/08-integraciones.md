@@ -6,23 +6,24 @@ Estados: VERIFICADO (probado contra la fuente oficial) · DOCUMENTADO (fuente of
 
 ## INT-BANGUAT: Tipo de cambio de referencia
 
-- **Estado:** DOCUMENTADO (2026-10-03). Pendiente: prueba de llamada real desde el servidor.
-- **Fuente:** servicio web SOAP público `https://www.banguat.gob.gt/variables/ws/TipoCambio.asmx` (consultado el 2026-10-03).
-- **Operaciones publicadas:**
-  - `TipoCambioDia`: tasa del día en dólares
-  - `TipoCambioRango(fecha_ini, fecha_fin)`: dólares en un rango, `dd/mm/aaaa`
-  - `TipoCambioRangoMoneda(fecha_ini, fecha_fin, moneda)`: otra moneda
-  - `VariablesDisponibles`: catálogo de monedas
-  - `TipoCambioFechaInicial`, `TipoCambioFechaInicialMoneda` y `Variables` también existen
-- **Diseño:**
-  - Tarea diaria de pg-boss que consulta `TipoCambioRango` desde la última fecha almacenada hasta hoy. Así recupera los días faltantes y es idempotente por `(moneda, fecha, fuente)`.
-  - Cada tasa se guarda con su fuente (`BANGUAT`) y la fecha de consulta.
-  - Si no hay tasa para la fecha, la transacción **no se contabiliza**. Opciones: usar una tasa manual con justificación, registrada en bitácora y aprobada por un rol autorizado.
-  - Qué tasa aplica en fines de semana y feriados lo decide el contador (SUP-008).
-- **Preguntas abiertas:**
-  - Códigos de moneda distintos de USD que CONI necesita
-  - Política de redondeo de la tasa
-  - Disponibilidad y límites de uso del servicio
+- **Estado:** VERIFICADO para USD (2026-10-04). Llamada real desde el entorno de desarrollo: se almacenaron 36 tasas del 2026-09-01 al 2026-10-04.
+- **Fuente:** servicio web SOAP público `https://www.banguat.gob.gt/variables/ws/TipoCambio.asmx`.
+- **Comportamiento observado (respuestas reales, 2026-10-04):**
+  - La operación usada es `TipoCambioRangoMoneda(fechainit, fechafin, moneda)`, con fechas `dd/mm/aaaa`. **Los nombres de parámetro son `fechainit`/`fechafin`**; un resumen de la documentación decía `fecha_ini`, y es incorrecto.
+  - Hay **una tasa por día calendario, incluidos fines de semana**: el sábado 26 y domingo 27 de septiembre repiten la tasa del viernes 25. Por eso no hace falta una política de "día hábil anterior" para USD.
+  - USD = `moneda` 2, con hasta 5 decimales. `venta` = `compra`. El sistema rechaza la respuesta si difieren.
+  - El catálogo `VariablesDisponibles` incluye monedas históricas (francos, marcos, pesetas…).
+  - **Advertencia:** para `moneda` 24 se obtuvo ≈ 1.137, con compra distinta de venta. Parece una tasa cruzada contra USD, no quetzales por unidad. **Ninguna moneda distinta de USD está habilitada** para sincronización automática hasta confirmar su base de cotización con BANGUAT y con el contador de CONI (DEC-MON).
+- **Implementación:**
+  - `apps/api/src/integrations/banguat.ts`: analizador estricto. Valida moneda, fecha, formato de tasa y que `TotalItems` coincida con los registros.
+  - `syncRates` es idempotente. Una tasa ya almacenada **no se sobrescribe**: si BANGUAT devuelve otro valor para la misma fecha, se cuenta como conflicto para revisión.
+  - `rate_sync_run` registra cada ejecución.
+  - Programación: `npm run rates:sync -w @coni/api` diario desde el planificador del servidor (cron o temporizador systemd). Sale con código ≠ 0 ante error o conflicto para que el monitoreo alerte.
+  - Sin tasa para la fecha, la partida **no se registra** (422). Opción: tasa manual con justificación, permiso `rates.manual` y bitácora. La tasa BANGUAT prevalece sobre la manual.
+  - El servidor calcula la tasa y el equivalente en GTQ. Se ignoran los valores que envíe el cliente.
+  - La base de datos rechaza líneas en moneda extranjera que citen una tasa no almacenada.
+- **Pruebas:** las pruebas automatizadas usan una respuesta real guardada (`apps/api/test/fixtures/`). La llamada en vivo **no** forma parte de CI.
+- **Pendiente:** política de diferencial cambiario realizado y no realizado (M01-CUR-003, SUP-008). Redondeo HALF_UP en estado PROPUESTA.
 
 ## INT-FEL: Facturas recibidas y recibos de donación
 

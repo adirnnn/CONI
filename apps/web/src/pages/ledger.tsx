@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { sum } from '@coni/shared';
 import {
-  api, type Account, type EntryDetail, type EntryStatus, type EntrySummary, type Me, type Period,
+  api, type Account, type Currency, type EntryDetail, type EntryStatus, type EntrySummary, type Me, type Period,
   type Project, type TrialBalance,
 } from '../lib/api.ts';
 import { formatMoney, SCOPE_LABEL, STATUS_LABEL } from '../lib/format.ts';
@@ -12,6 +12,8 @@ import { Button, Card, ErrorBox, Field, Input, Select, StatusBadge } from '../ui
 const useProjects = () => useQuery({ queryKey: ['projects'], queryFn: () => api<Project[]>('/projects') });
 const useAccounts = () => useQuery({ queryKey: ['accounts'], queryFn: () => api<Account[]>('/accounts') });
 const usePeriods = () => useQuery({ queryKey: ['periods'], queryFn: () => api<Period[]>('/periods') });
+const useCurrencies = () => useQuery({ queryKey: ['currencies'], queryFn: () => api<Currency[]>('/currencies') });
+const todayGt = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Guatemala' }).format(new Date());
 
 const th = 'px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted';
 const td = 'px-3 py-2 text-sm';
@@ -71,28 +73,38 @@ export function EntriesPage({ me }: { me: Me }) {
   );
 }
 
-interface DraftLine { accountId: string; projectId: string; debit: string; credit: string; memo: string }
-const emptyLine = (): DraftLine => ({ accountId: '', projectId: '', debit: '', credit: '', memo: '' });
+interface DraftLine { accountId: string; projectId: string; currency: string; debit: string; credit: string; memo: string }
+const emptyLine = (currency = 'GTQ'): DraftLine => ({ accountId: '', projectId: '', currency, debit: '', credit: '', memo: '' });
 const AMOUNT = /^\d{1,16}(\.\d{1,2})?$/;
 
-/** Manual journal entry in GTQ. Foreign-currency capture arrives with the BANGUAT rate service. */
+/** Manual journal entry. Foreign-currency lines are converted by the server at the BANGUAT rate of the date. */
 export function NewEntryPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const accounts = useAccounts();
   const projects = useProjects();
   const periods = usePeriods();
-  const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10));
+  const currencies = useCurrencies();
+  const [entryDate, setEntryDate] = useState(todayGt());
   const [description, setDescription] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([emptyLine(), emptyLine()]);
 
   const postable = accounts.data?.filter((a) => a.is_postable && a.active) ?? [];
   const period = periods.data?.find((p) => p.start_date <= entryDate && entryDate <= p.end_date);
-  const totals = useMemo(() => {
+  // Balance check per currency; with mixed currencies the GTQ balance is verified by the server.
+  const byCurrency = useMemo(() => {
     const valid = (v: string) => (AMOUNT.test(v) ? v : '0');
-    return { debit: sum(lines.map((l) => valid(l.debit))), credit: sum(lines.map((l) => valid(l.credit))) };
+    const codes = [...new Set(lines.map((l) => l.currency))];
+    return codes.map((code) => {
+      const ls = lines.filter((l) => l.currency === code);
+      return { code, debit: sum(ls.map((l) => valid(l.debit))), credit: sum(ls.map((l) => valid(l.credit))) };
+    });
   }, [lines]);
-  const balanced = totals.debit === totals.credit && totals.debit !== '0.00';
+  const mixed = byCurrency.length > 1;
+  const balanced = mixed
+    ? byCurrency.every((t) => t.debit !== '0.00' || t.credit !== '0.00')
+    : byCurrency[0]!.debit === byCurrency[0]!.credit && byCurrency[0]!.debit !== '0.00';
+  const foreign = lines.some((l) => l.currency !== 'GTQ');
 
   const update = (i: number, patch: Partial<DraftLine>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
 
@@ -103,9 +115,9 @@ export function NewEntryPage() {
       return api<{ id: string }>('/journal-entries', {
         method: 'POST',
         body: {
-          entryDate, periodId: period.id, description,
+          entryDate, description,
           lines: lines.map((l) => ({
-            accountId: Number(l.accountId), currency: 'GTQ', rate: '1', rateSource: 'FUNCTIONAL', rateDate: entryDate,
+            accountId: Number(l.accountId), currency: l.currency,
             ...(l.debit ? { debit: l.debit } : { credit: l.credit }),
             projectId: l.projectId ? Number(l.projectId) : null,
             memo: l.memo || undefined,
@@ -117,7 +129,7 @@ export function NewEntryPage() {
   });
 
   return (
-    <Card title="Nueva partida (GTQ)">
+    <Card title="Nueva partida">
       <form onSubmit={(e) => { e.preventDefault(); create.mutate(); }} className="space-y-5">
         <div className="grid gap-3 sm:grid-cols-[12rem_1fr]">
           <Field label="Fecha" hint={period ? `Periodo ${period.code} (${period.status === 'OPEN' ? 'abierto' : 'cerrado'})` : 'Sin periodo'}>
@@ -129,7 +141,7 @@ export function NewEntryPage() {
         <div className="overflow-x-auto">
           <table className="w-full border-collapse">
             <thead className="border-b border-line">
-              <tr><th className={th}>Cuenta</th><th className={th}>Proyecto</th><th className={`${th} text-right`}>Debe</th><th className={`${th} text-right`}>Haber</th><th className={th}>Detalle</th><th /></tr>
+              <tr><th className={th}>Cuenta</th><th className={th}>Proyecto</th><th className={th}>Moneda</th><th className={`${th} text-right`}>Debe</th><th className={`${th} text-right`}>Haber</th><th className={th}>Detalle</th><th /></tr>
             </thead>
             <tbody>
               {lines.map((l, i) => {
@@ -148,6 +160,11 @@ export function NewEntryPage() {
                         {projects.data?.map((p) => <option key={p.id} value={p.id}>{p.code}</option>)}
                       </Select>
                     </td>
+                    <td className="w-24 py-2 pr-2">
+                      <Select aria-label={`Moneda línea ${i + 1}`} value={l.currency} onChange={(e) => update(i, { currency: e.target.value })}>
+                        {currencies.data?.filter((c) => c.enabled).map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
+                      </Select>
+                    </td>
                     <td className="w-36 py-2 pr-2"><Input aria-label={`Debe línea ${i + 1}`} className="num" inputMode="decimal" pattern={AMOUNT.source} value={l.debit} disabled={!!l.credit} onChange={(e) => update(i, { debit: e.target.value })} /></td>
                     <td className="w-36 py-2 pr-2"><Input aria-label={`Haber línea ${i + 1}`} className="num" inputMode="decimal" pattern={AMOUNT.source} value={l.credit} disabled={!!l.debit} onChange={(e) => update(i, { credit: e.target.value })} /></td>
                     <td className="py-2 pr-2"><Input aria-label={`Detalle línea ${i + 1}`} value={l.memo} onChange={(e) => update(i, { memo: e.target.value })} /></td>
@@ -160,14 +177,17 @@ export function NewEntryPage() {
             </tbody>
             <tfoot>
               <tr>
-                <td colSpan={2} className="py-2"><Button type="button" variant="secondary" onClick={() => setLines((ls) => [...ls, emptyLine()])}>Agregar línea</Button></td>
-                <td className="num py-2 pr-2 text-right text-sm font-semibold">{formatMoney(totals.debit)}</td>
-                <td className="num py-2 pr-2 text-right text-sm font-semibold">{formatMoney(totals.credit)}</td>
-                <td colSpan={2} className={`py-2 text-sm font-medium ${balanced ? 'text-ok' : 'text-danger'}`}>{balanced ? 'Cuadrada' : 'Descuadrada'}</td>
+                <td colSpan={3} className="py-2"><Button type="button" variant="secondary" onClick={() => setLines((ls) => [...ls, emptyLine(ls.at(-1)?.currency)])}>Agregar línea</Button></td>
+                <td className="num py-2 pr-2 text-right text-sm font-semibold">{byCurrency.map((t) => <div key={t.code}>{formatMoney(t.debit, t.code)}</div>)}</td>
+                <td className="num py-2 pr-2 text-right text-sm font-semibold">{byCurrency.map((t) => <div key={t.code}>{formatMoney(t.credit, t.code)}</div>)}</td>
+                <td colSpan={2} className={`py-2 text-sm font-medium ${mixed ? 'text-muted' : balanced ? 'text-ok' : 'text-danger'}`}>
+                  {mixed ? 'Monedas mixtas: el cuadre en GTQ se verifica al aprobar' : balanced ? 'Cuadrada' : 'Descuadrada'}
+                </td>
               </tr>
             </tfoot>
           </table>
         </div>
+        {foreign && <p className="text-sm text-muted">Las líneas en moneda extranjera se convierten a GTQ con el tipo de cambio de referencia BANGUAT del {entryDate} al guardar. Si no existe tasa para esa fecha, la partida no se registra.</p>}
         <ErrorBox error={create.error} />
         <div className="flex gap-2">
           <Button type="submit" disabled={create.isPending || !balanced}>Guardar borrador</Button>
@@ -184,7 +204,6 @@ export function EntryPage({ me }: { me: Me }) {
   const navigate = useNavigate();
   const accounts = useAccounts();
   const projects = useProjects();
-  const periods = usePeriods();
   const detail = useQuery({ queryKey: ['entry', id], queryFn: () => api<EntryDetail>(`/journal-entries/${id}`) });
   const refresh = () => Promise.all([qc.invalidateQueries({ queryKey: ['entry'] }), qc.invalidateQueries({ queryKey: ['entries'] })]);
 
@@ -194,10 +213,7 @@ export function EntryPage({ me }: { me: Me }) {
   });
   const reverse = useMutation({
     mutationFn: () => {
-      const today = new Date().toISOString().slice(0, 10);
-      const open = periods.data?.find((p) => p.status === 'OPEN' && p.start_date <= today && today <= p.end_date);
-      if (!open) throw new Error('No hay un periodo abierto para la fecha de hoy');
-      return api<{ id: string }>(`/journal-entries/${id}/reverse`, { method: 'POST', body: { entryDate: today, periodId: open.id } });
+      return api<{ id: string }>(`/journal-entries/${id}/reverse`, { method: 'POST', body: { entryDate: todayGt() } });
     },
     onSuccess: async (r) => { await refresh(); navigate(`/partidas/${r.id}`); },
   });
@@ -234,13 +250,15 @@ export function EntryPage({ me }: { me: Me }) {
       <ErrorBox error={action.error ?? reverse.error} />
       <div className="overflow-x-auto">
         <table className="w-full border-collapse">
-          <thead className="border-b border-line"><tr><th className={th}>#</th><th className={th}>Cuenta</th><th className={th}>Proyecto</th><th className={`${th} text-right`}>Debe (GTQ)</th><th className={`${th} text-right`}>Haber (GTQ)</th><th className={th}>Detalle</th></tr></thead>
+          <thead className="border-b border-line"><tr><th className={th}>#</th><th className={th}>Cuenta</th><th className={th}>Proyecto</th><th className={`${th} text-right`}>Moneda original</th><th className={`${th} text-right`}>Tasa</th><th className={`${th} text-right`}>Debe (GTQ)</th><th className={`${th} text-right`}>Haber (GTQ)</th><th className={th}>Detalle</th></tr></thead>
           <tbody>
             {lines.map((l) => (
               <tr key={l.id} className="border-b border-line/60">
                 <td className={td}>{l.line_no}</td>
                 <td className={td}>{accountName(l.account_id)}</td>
                 <td className={td}>{projectCode(l.project_id)}</td>
+                <td className={`${td} num text-right`}>{l.currency_code === 'GTQ' ? '' : formatMoney(l.debit_tx !== '0.00' ? l.debit_tx : `-${l.credit_tx}`, l.currency_code)}</td>
+                <td className={`${td} num text-right`} title={l.rate_source === 'FUNCTIONAL' ? '' : `${l.rate_source} ${l.rate_date}`}>{l.currency_code === 'GTQ' ? '' : `${l.rate} (${l.rate_source === 'BANGUAT' ? 'BANGUAT' : 'manual'})`}</td>
                 <td className={`${td} num text-right`}>{l.debit_gtq !== '0.00' ? formatMoney(l.debit_gtq) : ''}</td>
                 <td className={`${td} num text-right`}>{l.credit_gtq !== '0.00' ? formatMoney(l.credit_gtq) : ''}</td>
                 <td className={td}>{l.memo}</td>

@@ -51,5 +51,8 @@ Los documentos de soporte **no se modifican**. Las discrepancias se registran pa
 | DEC-MIG | Fuentes, profundidad histórica, fecha de corte, saldos iniciales | Migración | CONI |
 | DEC-CAP | Opción de capacidad A/B/C | Compromiso de cronograma | Cénit |
 | DEC-FEL | Certificador FEL de CONI (recibos de donación) | M05-REC-001 | CONI |
+| DEC-MON | Monedas adicionales a USD y su base de cotización BANGUAT (algunas se cotizan contra USD) | M01-CUR | CONI / Contador |
+| DEC-RND | Aprobar redondeo de conversión (configurado HALF_UP en estado PROPUESTA) | M01-CUR | Contador |
+| DEC-CIE | Política de cierre: actualmente no se permite cerrar con partidas en borrador o aprobadas; reapertura con motivo | M01-ACC | Contador |
 | DEC-VIS | Visibilidad de cuentas institucionales compartidas (ver docs/05-permisos.md) | M07, reportes | CONI |
 | DEC-ROL | Matriz de roles definitiva (roles actuales en estado PROPUESTA) | M07, entregable §8 b | CONI |

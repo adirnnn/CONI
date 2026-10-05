@@ -1,3 +1,4 @@
+import { toFunctional, type RoundingMode } from '@coni/shared';
 import type { PoolClient } from 'pg';
 
 /**
@@ -34,7 +35,7 @@ export interface NewEntry {
 }
 
 export class LedgerError extends Error {
-  constructor(message: string, readonly code: 'NOT_FOUND' | 'CONFLICT' | 'FORBIDDEN') {
+  constructor(message: string, readonly code: 'NOT_FOUND' | 'CONFLICT' | 'FORBIDDEN' | 'RULE') {
     super(message);
   }
 }
@@ -168,4 +169,63 @@ export async function trialBalance(
     [opts.from, opts.to, opts.projectId ?? null],
   );
   return rows;
+}
+
+export interface InputLine {
+  accountId: number;
+  currency: string;
+  debit?: string;
+  credit?: string;
+  projectId?: number | null;
+  fundId?: number | null;
+  donorId?: number | null;
+  agreementId?: number | null;
+  memo?: string;
+}
+
+/** Period containing `date`, or a NOT_FOUND error. */
+export async function periodFor(client: PoolClient, date: string): Promise<number> {
+  const p = (await client.query<{ id: number }>(
+    'SELECT id FROM fiscal_period WHERE $1::date BETWEEN start_date AND end_date', [date])).rows[0];
+  if (!p) throw new LedgerError(`No hay periodo contable para la fecha ${date}`, 'RULE');
+  return p.id;
+}
+
+/**
+ * Prices input lines on the server: GTQ lines at rate 1; foreign lines at the
+ * applicable stored rate for the entry date (BANGUAT, else authorized manual),
+ * converted with the configured rounding mode. A missing rate blocks the entry.
+ */
+export async function priceLines(client: PoolClient, entryDate: string, lines: InputLine[]): Promise<NewLine[]> {
+  const rounding = (await client.query<{ value: RoundingMode }>(
+    "SELECT value FROM app_setting WHERE key = 'money.rounding'")).rows[0]?.value;
+  if (rounding !== 'HALF_UP' && rounding !== 'HALF_EVEN') throw new Error('money.rounding is not configured');
+  const functional = (await client.query<{ code: string }>(
+    'SELECT code FROM currency WHERE is_functional')).rows[0]?.code;
+  const rates = new Map<string, { rate: string; source: 'BANGUAT' | 'MANUAL'; rate_date: string }>();
+
+  const out: NewLine[] = [];
+  for (const l of lines) {
+    if (l.currency === functional) {
+      out.push({ ...l, rate: '1', rateSource: 'FUNCTIONAL', rateDate: entryDate });
+      continue;
+    }
+    if (!rates.has(l.currency)) {
+      const r = (await client.query<{ rate: string; source: 'BANGUAT' | 'MANUAL'; rate_date: string }>(
+        'SELECT rate::text, source, rate_date::text FROM rate_for($1, $2)', [l.currency, entryDate])).rows[0];
+      if (!r) {
+        throw new LedgerError(
+          `No hay tipo de cambio para ${l.currency} del ${entryDate}. Sincronice BANGUAT o registre una tasa manual autorizada.`,
+          'RULE');
+      }
+      rates.set(l.currency, r);
+    }
+    const r = rates.get(l.currency)!;
+    out.push({
+      ...l, rate: r.rate, rateSource: r.source, rateDate: r.rate_date,
+      debitGtq: l.debit ? toFunctional(l.debit, r.rate, rounding) : undefined,
+      creditGtq: l.credit ? toFunctional(l.credit, r.rate, rounding) : undefined,
+    });
+  }
+  return out;
 }

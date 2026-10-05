@@ -10,7 +10,8 @@
     "dev": "node --env-file=.env --import tsx --watch src/server.ts",
     "start": "tsx src/server.ts",
     "create-admin": "tsx src/scripts/create-admin.ts",
-    "seed:dev": "tsx src/scripts/seed-dev.ts"
+    "seed:dev": "tsx src/scripts/seed-dev.ts",
+    "rates:sync": "tsx src/scripts/sync-rates.ts"
   },
   "dependencies": {
     "@coni/shared": "0.1.0",

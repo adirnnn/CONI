@@ -21,7 +21,7 @@ export async function freshDatabase(): Promise<pg.Pool> {
 /** Synthetic reference data only — never real client data. */
 export async function seedSynthetic(pool: pg.Pool) {
   await pool.query(`
-    INSERT INTO currency (code, name, is_functional) VALUES ('GTQ','Quetzal',true), ('USD','Dólar',false);
+    INSERT INTO exchange_rate (currency_code, rate_date, rate, source) VALUES ('USD','2026-10-15',7.7,'BANGUAT');
     INSERT INTO fiscal_period (code, start_date, end_date, status) VALUES
       ('2026-09','2026-09-01','2026-09-30','CLOSED'),
       ('2026-10','2026-10-01','2026-10-31','OPEN');

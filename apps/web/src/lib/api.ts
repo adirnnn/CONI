@@ -34,7 +34,7 @@ export interface Me {
 }
 
 export interface Project { id: number; code: string; name: string; active: boolean }
-export interface Account { id: number; code: string; name: string; type: string; is_postable: boolean; requires_project: boolean; active: boolean }
+export interface Account { id: number; code: string; name: string; type: string; parent_id: number | null; is_postable: boolean; requires_project: boolean; active: boolean }
 export interface Period { id: number; code: string; start_date: string; end_date: string; status: 'OPEN' | 'CLOSED' }
 export type EntryStatus = 'DRAFT' | 'APPROVED' | 'POSTED' | 'REVERSED';
 export interface EntrySummary {
@@ -44,7 +44,7 @@ export interface EntrySummary {
 }
 export interface EntryLine {
   id: string; line_no: number; account_id: number; currency_code: string;
-  debit_tx: string; credit_tx: string; rate: string; rate_source: string;
+  debit_tx: string; credit_tx: string; rate: string; rate_source: string; rate_date: string;
   debit_gtq: string; credit_gtq: string; project_id: number | null; memo: string | null;
 }
 export interface EntryDetail {
@@ -56,3 +56,11 @@ export interface TrialBalance {
   from: string; to: string; projectId: number | null;
   rows: { code: string; name: string; debit: string; credit: string }[];
 }
+
+export interface Currency { code: string; name: string; is_functional: boolean; banguat_code: number | null; enabled: boolean }
+export interface Rate { currency_code: string; rate_date: string; rate: string; source: 'BANGUAT' | 'MANUAL'; justification: string | null; approved_by: string | null }
+export interface SyncRun {
+  id: string; started_at: string; finished_at: string | null; currency_code: string; date_from: string; date_to: string;
+  inserted: number; unchanged: number; conflicts: number; status: 'RUNNING' | 'OK' | 'ERROR'; error: string | null;
+}
+export interface Setting { key: string; value: string; status: 'PROPUESTA' | 'APROBADO'; description: string }

@@ -30,7 +30,13 @@ No adjudicado ni firmado. No hay D1. Todo el trabajo es precontractual (DEC-004)
 - Verificación manual en navegador (2026-10-03, datos sintéticos):
   - inicio de sesión de `demo.contador`, MFA con QR, captura de partida de Q1,250.50 cuadrada, aprobación por `demo.gerente`, contabilización, balance de comprobación cuadrado
   - `demo.consulta` (DEMO-B): 404 en la partida de DEMO-A, lista vacía, 403 en reporte de DEMO-A
-- Pruebas automatizadas: 4 (shared) + 55 (api) + 1 (web). `npm run build -w @coni/web` correcto.
+- **Incremento 4, configuración contable y multimoneda:**
+  - migración `003_accounting_config.sql`: reglas del catálogo, cierre y reapertura de periodos con motivo, permisos `accounting.config`, `period.close` y `rates.manual`, monedas GTQ/USD, tasas por RLS, `app_setting` (redondeo PROPUESTA), `rate_sync_run`
+  - integración BANGUAT verificada con el servicio real; script `rates:sync`
+  - el servidor fija el periodo y valora las líneas; ya no los toma del cliente
+  - pantallas web: Catálogo, Periodos, Tipo de cambio; captura multimoneda
+  - verificado en navegador: tasas reales visibles; partida de US$250.00 valorada a 7.641360 = Q1,910.34
+- Pruebas automatizadas: 4 (shared) + 78 (api: 26 mayor, 29 seguridad, 23 configuración/multimoneda) + 1 (web). Build web correcto.
 - CI (`.github/workflows/ci.yml`) aún no ha corrido (sin push).
 
 ## Pendiente inmediato
@@ -75,5 +81,6 @@ Ninguno. `npm audit` reporta avisos en dependencias de desarrollo; están sin re
 ## Siguiente acción
 
 1. Commit de documentación en `main`; rama `feat/foundation` con incrementos 1 y 2; push; PR. **Pendiente de autorización.**
-2. Catálogo de cuentas configurable, administración de periodos (cierre/reapertura con bitácora) y tipos de cambio BANGUAT (tarea programada + captura multimoneda).
-3. Pruebas E2E con Playwright de los flujos críticos.
+2. Presupuestos por proyecto/renglón con techos y alertas de sobregiro (M01-BUD-001..003), con prueba de concurrencia.
+3. Estados financieros: Balance General, Estado de Resultados y Ejecución Presupuestaria por proyecto y consolidados (M01-ACC-002).
+4. Pruebas E2E con Playwright de los flujos críticos.
