@@ -269,7 +269,19 @@ export function buildApp(deps: { pool: Pool; config: Config; rateFetcher?: RateF
       return { ok: true };
     };
 
-  app.post('/journal-entries/:id/approve', entryAction('ledger.approve', approveEntry));
+  // Approval returns any budget alerts it raised (WARN budgets); BLOCK budgets reject with 422.
+  app.post('/journal-entries/:id/approve', async (req) => {
+    await guard('ledger.approve')(req);
+    const { id: entryId } = z.object({ id }).parse(req.params);
+    return as(req, async (c) => {
+      await approveEntry(c, String(entryId), req.user!.username);
+      const alerts = (await c.query(
+        `SELECT p.code AS project_code, ac.code AS account_code, a.kind, a.requested::text, a.available::text
+           FROM budget_alert a JOIN project p ON p.id = a.project_id JOIN account ac ON ac.id = a.account_id
+          WHERE a.entry_id = $1 ORDER BY a.id`, [entryId])).rows;
+      return { ok: true, budgetAlerts: alerts };
+    });
+  });
   app.post('/journal-entries/:id/post', entryAction('ledger.post', async (c, eid, u) => {
     const isReversal = (await c.query('SELECT 1 FROM journal_entry WHERE id = $1 AND reverses_entry_id IS NOT NULL', [eid])).rowCount;
     await (isReversal ? postReversal(c, eid, u) : postEntry(c, eid, u));
@@ -380,6 +392,87 @@ export function buildApp(deps: { pool: Pool; config: Config; rateFetcher?: RateF
 
   app.get('/settings', { preHandler: guard('ledger.read') }, async (req) =>
     as(req, async (c) => (await c.query('SELECT key, value, status, description FROM app_setting ORDER BY key')).rows));
+
+  // ------------------------------------------------------------ budgets (M01-BUD)
+  const budgetLines = z.array(z.object({ accountId: id, amount })).min(1).max(1000);
+
+  app.get('/budgets', { preHandler: guard('ledger.read') }, async (req) => {
+    const q = z.object({ projectId: id.optional() }).parse(req.query);
+    return as(req, async (c) => (await c.query(
+      `SELECT b.id, b.project_id, p.code AS project_code, b.name, b.start_date, b.end_date, b.enforcement, b.status,
+              b.created_by, b.approved_by,
+              (SELECT coalesce(sum(amount), 0)::numeric(18,2)::text FROM budget_line WHERE budget_id = b.id) AS total
+         FROM budget b JOIN project p ON p.id = b.project_id
+        WHERE ($1::int IS NULL OR b.project_id = $1)
+        ORDER BY b.start_date DESC, p.code`, [q.projectId ?? null])).rows);
+  });
+
+  app.post('/budgets', { preHandler: guard('budget.manage') }, async (req, reply) => {
+    const b = z.object({
+      projectId: id, name: z.string().min(1).max(200), startDate: date, endDate: date,
+      enforcement: z.enum(['BLOCK', 'WARN']), lines: budgetLines,
+    }).parse(req.body);
+    const budgetId = await as(req, async (c) => {
+      const bid = (await c.query<{ id: number }>(
+        `INSERT INTO budget (project_id, name, start_date, end_date, enforcement, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+        [b.projectId, b.name, b.startDate, b.endDate, b.enforcement, req.user!.username])).rows[0]!.id;
+      for (const l of b.lines) {
+        await c.query('INSERT INTO budget_line (budget_id, account_id, amount) VALUES ($1,$2,$3)', [bid, l.accountId, l.amount]);
+      }
+      return bid;
+    });
+    return reply.status(201).send({ id: budgetId });
+  });
+
+  app.put('/budgets/:id/lines', { preHandler: guard('budget.manage') }, async (req) => {
+    const { id: bid } = z.object({ id }).parse(req.params);
+    const lines = budgetLines.parse(req.body);
+    await as(req, async (c) => {
+      const found = (await c.query('SELECT 1 FROM budget WHERE id = $1', [bid])).rowCount;
+      if (!found) throw new HttpError(404, 'NOT_FOUND', 'Presupuesto no encontrado');
+      await c.query('DELETE FROM budget_line WHERE budget_id = $1', [bid]);
+      for (const l of lines) {
+        await c.query('INSERT INTO budget_line (budget_id, account_id, amount) VALUES ($1,$2,$3)', [bid, l.accountId, l.amount]);
+      }
+    });
+    return { ok: true };
+  });
+
+  const budgetTransition = (permission: string, sql: string) =>
+    async (req: FastifyRequest) => {
+      await guard(permission)(req);
+      const { id: bid } = z.object({ id }).parse(req.params);
+      const n = await as(req, async (c) => {
+        if (!(await c.query('SELECT 1 FROM budget WHERE id = $1', [bid])).rowCount) {
+          throw new HttpError(404, 'NOT_FOUND', 'Presupuesto no encontrado');
+        }
+        return (await c.query(sql, [bid, req.user!.username])).rowCount;
+      });
+      if (n !== 1) throw new HttpError(409, 'CONFLICT', 'Estado del presupuesto no permite la operación');
+      return { ok: true };
+    };
+  app.post('/budgets/:id/approve', budgetTransition('budget.approve',
+    `UPDATE budget SET status = 'APPROVED', approved_by = $2 WHERE id = $1 AND status = 'DRAFT'`));
+  app.post('/budgets/:id/close', budgetTransition('budget.approve',
+    `UPDATE budget SET status = 'CLOSED' WHERE id = $1 AND status = 'APPROVED' AND $2::text IS NOT NULL`));
+
+  app.get('/budgets/:id', { preHandler: guard('ledger.read') }, async (req) => {
+    const { id: bid } = z.object({ id }).parse(req.params);
+    return as(req, async (c) => {
+      const budget = (await c.query(
+        `SELECT b.*, p.code AS project_code FROM budget b JOIN project p ON p.id = b.project_id WHERE b.id = $1`, [bid])).rows[0];
+      if (!budget) throw new HttpError(404, 'NOT_FOUND', 'Presupuesto no encontrado');
+      const rows = (await c.query(
+        `SELECT account_id, code, name, budgeted::text, executed::text, committed::text, available::text
+           FROM budget_execution($1)`, [bid])).rows;
+      const alerts = (await c.query(
+        `SELECT a.id, a.created_at, a.entry_id, ac.code AS account_code, a.kind, a.requested::text, a.available::text, a.approved_by
+           FROM budget_alert a JOIN account ac ON ac.id = a.account_id
+          WHERE a.budget_id = $1 ORDER BY a.id DESC`, [bid])).rows;
+      return { budget, rows, alerts };
+    });
+  });
 
   // ------------------------------------------------------------ audit
   app.get('/audit/verify', { preHandler: guard('audit.read') }, async (req) =>

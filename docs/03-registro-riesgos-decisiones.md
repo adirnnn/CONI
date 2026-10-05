@@ -54,5 +54,6 @@ Los documentos de soporte **no se modifican**. Las discrepancias se registran pa
 | DEC-MON | Monedas adicionales a USD y su base de cotización BANGUAT (algunas se cotizan contra USD) | M01-CUR | CONI / Contador |
 | DEC-RND | Aprobar redondeo de conversión (configurado HALF_UP en estado PROPUESTA) | M01-CUR | Contador |
 | DEC-CIE | Política de cierre: actualmente no se permite cerrar con partidas en borrador o aprobadas; reapertura con motivo | M01-ACC | Contador |
+| DEC-PRE | Política presupuestaria: bloquear o alertar el sobregiro (hoy se elige por presupuesto); gasto en cuentas sin techo (hoy disponible = 0); flujo de modificaciones de presupuestos aprobados (hoy congelados); distribución mensual; inclusión de compromisos de órdenes de compra (M02) | M01-BUD | CONI / Contador |
 | DEC-VIS | Visibilidad de cuentas institucionales compartidas (ver docs/05-permisos.md) | M07, reportes | CONI |
 | DEC-ROL | Matriz de roles definitiva (roles actuales en estado PROPUESTA) | M07, entregable §8 b | CONI |

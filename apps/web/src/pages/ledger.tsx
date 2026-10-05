@@ -73,6 +73,8 @@ export function EntriesPage({ me }: { me: Me }) {
   );
 }
 
+interface BudgetAlert { project_code: string; account_code: string; kind: 'OVERSPEND' | 'UNBUDGETED'; requested: string; available: string }
+
 interface DraftLine { accountId: string; projectId: string; currency: string; debit: string; credit: string; memo: string }
 const emptyLine = (currency = 'GTQ'): DraftLine => ({ accountId: '', projectId: '', currency, debit: '', credit: '', memo: '' });
 const AMOUNT = /^\d{1,16}(\.\d{1,2})?$/;
@@ -207,9 +209,10 @@ export function EntryPage({ me }: { me: Me }) {
   const detail = useQuery({ queryKey: ['entry', id], queryFn: () => api<EntryDetail>(`/journal-entries/${id}`) });
   const refresh = () => Promise.all([qc.invalidateQueries({ queryKey: ['entry'] }), qc.invalidateQueries({ queryKey: ['entries'] })]);
 
+  const [alerts, setAlerts] = useState<BudgetAlert[]>([]);
   const action = useMutation({
-    mutationFn: (a: 'approve' | 'post') => api(`/journal-entries/${id}/${a}`, { method: 'POST' }),
-    onSuccess: refresh,
+    mutationFn: (a: 'approve' | 'post') => api<{ budgetAlerts?: BudgetAlert[] }>(`/journal-entries/${id}/${a}`, { method: 'POST' }),
+    onSuccess: async (r) => { setAlerts(r.budgetAlerts ?? []); await refresh(); },
   });
   const reverse = useMutation({
     mutationFn: () => {
@@ -248,6 +251,18 @@ export function EntryPage({ me }: { me: Me }) {
         {entry.reverses_entry_id && <div className="sm:col-span-4"><dt className="text-muted">Revierte</dt><dd><Link className="text-brand" to={`/partidas/${entry.reverses_entry_id}`}>Partida {entry.reverses_entry_id}</Link></dd></div>}
       </dl>
       <ErrorBox error={action.error ?? reverse.error} />
+      {alerts.length > 0 && (
+        <div role="status" className="mb-4 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">
+          Aprobada con alertas de presupuesto:
+          <ul className="list-disc pl-5">
+            {alerts.map((a) => (
+              <li key={`${a.project_code}-${a.account_code}`}>
+                {a.project_code} · cuenta {a.account_code}: {a.kind === 'OVERSPEND' ? 'sobregiro' : 'sin presupuesto'} — solicitado {formatMoney(a.requested)}, disponible {formatMoney(a.available)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full border-collapse">
           <thead className="border-b border-line"><tr><th className={th}>#</th><th className={th}>Cuenta</th><th className={th}>Proyecto</th><th className={`${th} text-right`}>Moneda original</th><th className={`${th} text-right`}>Tasa</th><th className={`${th} text-right`}>Debe (GTQ)</th><th className={`${th} text-right`}>Haber (GTQ)</th><th className={th}>Detalle</th></tr></thead>

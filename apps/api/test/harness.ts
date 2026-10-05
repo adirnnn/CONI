@@ -36,7 +36,7 @@ export async function createHarness(opts: { rateFetcher?: RateFetcher } = {}) {
     }, { restricted: false });
   }
 
-  async function call(method: 'GET' | 'POST' | 'PATCH', url: string, cookie?: string, payload?: unknown): Promise<Res> {
+  async function call(method: 'GET' | 'POST' | 'PATCH' | 'PUT', url: string, cookie?: string, payload?: unknown): Promise<Res> {
     return app.inject({
       method, url, payload: payload as object | undefined,
       headers: { [CSRF_HEADER]: '1', ...(cookie ? { cookie: `${SESSION_COOKIE}=${cookie}` } : {}) },

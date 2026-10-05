@@ -4,8 +4,8 @@
 
 ## Estado del repositorio
 
-- Ramas locales: `main` (documentación) y `feat/foundation` (código). Ver `git log --oneline`.
-- Remoto: `origin` → `github.com/adirnnn/CONI` (privado, confirmado por el desarrollador). **Push pendiente:** el entorno del asistente no tiene permiso para publicar; el desarrollador debe ejecutar el push.
+- Ramas: `main` (documentación) y `feat/foundation` (código). Ver `git log --oneline`.
+- Remoto: `origin` → `github.com/adirnnn/CONI` (privado). El desarrollador hace los push manualmente; el asistente no tiene permiso de publicación. Verificado el 2026-10-05: `main` y `feat/foundation` coinciden con el remoto hasta `afc0b88`.
 
 ## Estado contractual
 
@@ -36,7 +36,13 @@ No adjudicado ni firmado. No hay D1. Todo el trabajo es precontractual (DEC-004)
   - el servidor fija el periodo y valora las líneas; ya no los toma del cliente
   - pantallas web: Catálogo, Periodos, Tipo de cambio; captura multimoneda
   - verificado en navegador: tasas reales visibles; partida de US$250.00 valorada a 7.641360 = Q1,910.34
-- Pruebas automatizadas: 4 (shared) + 78 (api: 26 mayor, 29 seguridad, 23 configuración/multimoneda) + 1 (web). Build web correcto.
+- **Incremento 5, presupuestos (M01-BUD):**
+  - migración `004_budgets.sql`: presupuesto por proyecto, vigencia y cuenta de gasto; control BLOCK/WARN elegido por presupuesto; alertas; reporte de ejecución
+  - verificación en la base de datos al aprobar partidas, con bloqueo de fila
+  - triggers que impiden registrar aprobaciones o contabilizaciones a nombre de otro usuario
+  - pantallas web: Presupuestos (lista, nuevo, detalle con ejecución y alertas); alertas visibles al aprobar una partida
+- Pruebas automatizadas: 4 (shared) + 91 (api: 26 mayor, 29 seguridad, 23 configuración/multimoneda, 13 presupuesto) + 1 (web). Build web correcto.
+  - Prueba de concurrencia determinista; verificado por mutación que falla sin el bloqueo.
 - CI (`.github/workflows/ci.yml`) aún no ha corrido (sin push).
 
 ## Pendiente inmediato
@@ -81,6 +87,6 @@ Ninguno. `npm audit` reporta avisos en dependencias de desarrollo; están sin re
 ## Siguiente acción
 
 1. Commit de documentación en `main`; rama `feat/foundation` con incrementos 1 y 2; push; PR. **Pendiente de autorización.**
-2. Presupuestos por proyecto/renglón con techos y alertas de sobregiro (M01-BUD-001..003), con prueba de concurrencia.
-3. Estados financieros: Balance General, Estado de Resultados y Ejecución Presupuestaria por proyecto y consolidados (M01-ACC-002).
-4. Pruebas E2E con Playwright de los flujos críticos.
+2. Estados financieros: Balance General, Estado de Resultados y Ejecución Presupuestaria por proyecto y consolidados (M01-ACC-002).
+3. Pruebas E2E con Playwright de los flujos críticos.
+4. Módulo 2 (compras y CxP), que alimentará compromisos presupuestarios desde órdenes de compra.

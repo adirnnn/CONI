@@ -6,6 +6,7 @@ import { api, ApiError, type Me } from './lib/api.ts';
 import { ChangePasswordPage, LoginPage, MfaPage } from './pages/auth.tsx';
 import { EntriesPage, EntryPage, NewEntryPage, TrialBalancePage } from './pages/ledger.tsx';
 import { AccountsPage, PeriodsPage, RatesPage } from './pages/config.tsx';
+import { BudgetPage, BudgetsPage, NewBudgetPage } from './pages/budgets.tsx';
 import { ErrorBox } from './ui.tsx';
 import './index.css';
 
@@ -42,6 +43,7 @@ function Shell({ me }: { me: Me }) {
           <span className="font-semibold text-brand">CONI</span>
           <nav className="flex flex-wrap gap-1" aria-label="Principal">
             {can('ledger.read') && <NavLink to="/partidas" end className={link}>Partidas</NavLink>}
+            {can('ledger.read') && <NavLink to="/presupuestos" className={link}>Presupuestos</NavLink>}
             {can('ledger.read') && <NavLink to="/reportes/balance-comprobacion" className={link}>Balance de comprobación</NavLink>}
             {can('ledger.read') && <NavLink to="/configuracion/cuentas" className={link}>Catálogo</NavLink>}
             {can('ledger.read') && <NavLink to="/configuracion/periodos" className={link}>Periodos</NavLink>}
@@ -60,6 +62,9 @@ function Shell({ me }: { me: Me }) {
           <Route path="/partidas/nueva" element={<NewEntryPage />} />
           <Route path="/partidas/:id" element={<EntryPage me={me} />} />
           <Route path="/reportes/balance-comprobacion" element={<TrialBalancePage />} />
+          <Route path="/presupuestos" element={<BudgetsPage me={me} />} />
+          <Route path="/presupuestos/nuevo" element={<NewBudgetPage />} />
+          <Route path="/presupuestos/:id" element={<BudgetPage me={me} />} />
           <Route path="/configuracion/cuentas" element={<AccountsPage me={me} />} />
           <Route path="/configuracion/periodos" element={<PeriodsPage me={me} />} />
           <Route path="/configuracion/tipos-cambio" element={<RatesPage me={me} />} />
